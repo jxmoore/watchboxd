@@ -514,7 +514,7 @@ select option { background: var(--surface-2); color: var(--text); }
 .meta { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 18px 0 0; font-size: 13px; }
 .meta dt { font: 600 10.5px/1.9 var(--sans); letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
 .meta dd { margin: 0; color: var(--muted); }
-.modal-avail { margin-top: 22px; padding: 16px 18px; border-radius: var(--r); background: var(--bg); border: 1px solid var(--edge); }
+.modal-avail { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--edge); }
 .modal-avail .eyebrow { margin-bottom: 12px; }
 .avail { display: flex; flex-direction: column; gap: 9px; }
 .avail p { margin: 0; font-size: 13px; }
