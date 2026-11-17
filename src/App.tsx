@@ -212,7 +212,7 @@ export default function App() {
           <h1>
             Where’s it <em>streaming?</em>
           </h1>
-          <p className="lede">Bring a watchlist or any list, and see what’s free, on your subscriptions, or to rent tonight.</p>
+          <p className="lede">Enter your Letterboxd username or paste any Letterboxd list, and see what you can watch and where.</p>
         </div>
         <SearchForm
           initialMode={initial.mode}
