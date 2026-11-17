@@ -25,6 +25,12 @@ export interface Availability {
   buy: Provider[];
 }
 
+/** A credited person; the id is TMDB's, used to look up their IMDb page when clicked. */
+export interface Person {
+  id: number;
+  name: string;
+}
+
 /** Extra details shown in the film modal. */
 export interface FilmInfo {
   kind: 'movie' | 'tv';
@@ -35,11 +41,22 @@ export interface FilmInfo {
   seasons: number | null; // TV only
   certification: string | null; // e.g. "R", "15", "TV-MA" for the region
   genres: string[];
-  directors: string[]; // creators for TV
-  cast: string[];
+  directors: Person[]; // creators for TV
+  writers: Person[]; // screenplay / writer / story credits (films)
+  cast: Person[]; // top-billed actors, in billing order
   rating: number | null; // TMDB average out of 10
   votes: number;
   backdrop: string | null;
+  /** TMDB production status: "Released", "Post Production", "In Production", "Planned", "Rumored"… */
+  status: string | null;
+  /** Release dates in the selected country (YYYY-MM-DD), earliest of each kind. Films only. */
+  dates: ReleaseDates;
+}
+
+export interface ReleaseDates {
+  theatrical: string | null; // wide theatrical, or limited if that's all there is
+  digital: string | null; // streaming / rent / buy
+  physical: string | null; // disc
 }
 
 export interface FilmDetails {
@@ -79,6 +96,12 @@ export async function getTrendingPosters(): Promise<TrendingPoster[]> {
     .flatMap((p) => p.results ?? [])
     .filter((m: any) => m.poster_path && !m.adult)
     .map((m: any) => ({ title: m.title || m.name, src: `${IMG}/w342${m.poster_path}` }));
+}
+
+/** A person's IMDb id ("nm0000621"), or null if TMDB doesn't have one. One request; used only when an actor is clicked. */
+export async function getPersonImdbId(personId: string): Promise<string | null> {
+  const r = await tmdb(`/person/${personId}/external_ids`);
+  return r.imdb_id || null;
 }
 
 /** Fallback when Letterboxd has no TMDB id (often a film TMDB files as TV). name is "Title (Year)". */
@@ -182,10 +205,17 @@ function certificationFor(d: any, kind: 'movie' | 'tv', region: string): string 
 
 function filmInfo(d: any, kind: 'movie' | 'tv', region: string): FilmInfo {
   const crew: any[] = d.credits?.crew ?? [];
-  const directors =
-    kind === 'tv'
-      ? (d.created_by ?? []).map((c: any) => c.name)
-      : crew.filter((c) => c.job === 'Director').map((c) => c.name);
+  // One entry per person, in credit order, at most `max`
+  const people = (list: any[], max: number): Person[] => {
+    const seen = new Set<number>();
+    return list
+      .filter((c) => c?.id && !seen.has(c.id) && seen.add(c.id))
+      .slice(0, max)
+      .map((c) => ({ id: c.id, name: c.name }));
+  };
+  const directors = kind === 'tv' ? people(d.created_by ?? [], 3) : people(crew.filter((c) => c.job === 'Director'), 3);
+  const writers =
+    kind === 'tv' ? [] : people(crew.filter((c) => ['Screenplay', 'Writer', 'Story', 'Screenstory'].includes(c.job)), 4);
   const runtime = kind === 'tv' ? d.episode_run_time?.[0] : d.runtime;
   return {
     kind,
@@ -196,10 +226,30 @@ function filmInfo(d: any, kind: 'movie' | 'tv', region: string): FilmInfo {
     seasons: kind === 'tv' ? d.number_of_seasons ?? null : null,
     certification: certificationFor(d, kind, region),
     genres: (d.genres ?? []).map((g: any) => g.name),
-    directors: [...new Set<string>(directors)],
-    cast: (d.credits?.cast ?? []).slice(0, 8).map((c: any) => c.name),
+    directors,
+    writers,
+    cast: people(d.credits?.cast ?? [], 8),
     rating: d.vote_count ? Math.round(d.vote_average * 10) / 10 : null,
     votes: d.vote_count ?? 0,
     backdrop: d.backdrop_path ? `${IMG}/w1280${d.backdrop_path}` : null,
+    status: d.status || null,
+    dates: kind === 'movie' ? releaseDatesFor(d, region) : { theatrical: null, digital: null, physical: null },
   };
+}
+
+// TMDB release types: 1 premiere, 2 limited theatrical, 3 theatrical, 4 digital, 5 physical, 6 TV
+function releaseDatesFor(d: any, region: string): ReleaseDates {
+  const list: { type: number; release_date: string }[] =
+    d.release_dates?.results?.find((r: any) => r.iso_3166_1 === region)?.release_dates ?? [];
+  const earliest = (...types: number[]) =>
+    list
+      .filter((r) => types.includes(r.type) && r.release_date)
+      .map((r) => r.release_date.slice(0, 10))
+      .sort()[0] ?? null;
+  const theatrical = earliest(3) ?? earliest(2);
+  const digital = earliest(4);
+  const physical = earliest(5);
+  // Nothing for this country: fall back to the film's main release date as its theatrical date
+  if (!theatrical && !digital && !physical) return { theatrical: d.release_date || null, digital: null, physical: null };
+  return { theatrical, digital, physical };
 }

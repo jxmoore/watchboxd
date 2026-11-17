@@ -3,6 +3,7 @@ import type { FilmDetails, ListFilm, Provider } from '../api';
 import type { DetailEntry } from '../useFilmDetails';
 import { visibleRows, type Cat, type Show } from '../filters';
 import { titleYear } from './FilmParts';
+import { upcoming } from '../release';
 
 interface Props {
   film: ListFilm;
@@ -48,7 +49,10 @@ export default function FilmCard({ film, entry, show, hidden, onOpen }: Props) {
 
   let badge: { text: string; cls: string } | null = null;
   if (entry && !entry.ok) badge = { text: 'Not found', cls: 'none' };
-  else if (s && !s.anywhere) badge = { text: 'Not available', cls: 'none' };
+  else if (s && !s.anywhere) {
+    const soon = d ? upcoming(d.info) : null; // e.g. "In theaters Dec 18"
+    badge = soon ? { text: soon, cls: 'soon' } : { text: 'Not available', cls: 'none' };
+  }
   else if (s?.best) badge = { text: BADGE[s.best], cls: s.best };
   else if (s) badge = { text: 'Filtered out', cls: 'none' };
 

@@ -1,7 +1,7 @@
-import type { FilmDetails, FilmInfo, Provider } from '../lib/tmdb';
+import type { FilmDetails, FilmInfo, Person, Provider } from '../lib/tmdb';
 import type { ListFilm } from '../lib/letterboxd';
 
-export type { FilmDetails, FilmInfo, Provider, ListFilm };
+export type { FilmDetails, FilmInfo, Person, Provider, ListFilm };
 
 export interface ListResponse {
   title: string | null;
@@ -24,7 +24,7 @@ export const fetchTrending = (signal?: AbortSignal) =>
   getJson<{ posters: { title: string; src: string }[] }>('/api/trending', signal).then((r) => r.posters);
 
 // Bump when the shape of /api/film's response changes, so browsers and the CDN don't serve the old shape.
-const FILM_API_VERSION = 7;
+const FILM_API_VERSION = 10;
 
 export const fetchFilm = (film: ListFilm, region: string, signal?: AbortSignal) =>
   getJson<FilmDetails>(

@@ -141,15 +141,21 @@ export default function App() {
   const nowhere = stats.unavailable - stats.failed; // looked up fine, just not available
   const closeModal = useCallback(() => setSelected(null), []);
 
-  // Tonight's pick: films in the current results you can stream free or on a checked subscription.
+  // Tonight's pick: a film in the current results you can watch free or on a checked subscription. If there are
+  // none (say only a rental store is checked, or the "Rent / buy only" filter is on), a rental instead.
   const picks = useMemo(() => {
-    const out: Pick[] = [];
+    const watchNow: Pick[] = [];
+    const rentals: Pick[] = [];
     for (const f of filtered) {
       const e = details[f.slug];
-      if (e?.ok && visibleRows(e.data, 'stream', hidden).length) out.push({ film: f, d: e.data });
+      if (!e?.ok) continue;
+      const best = visibleRows(e.data, show, hidden)[0]; // free → subscription → rent → buy
+      if (!best) continue;
+      const pick: Pick = { film: f, d: e.data, cat: best[0], providers: best[1] };
+      (best[0] === 'free' || best[0] === 'subscription' ? watchNow : rentals).push(pick);
     }
-    return out;
-  }, [filtered, details, hidden]);
+    return watchNow.length ? watchNow : rentals;
+  }, [filtered, details, hidden, show]);
   const pick = picks.length ? picks[pickSeed % picks.length] : null;
 
   // First posters from the list (in list order) for the header's poster wall.
@@ -255,7 +261,6 @@ export default function App() {
           {pick && (
             <Spotlight
               pick={pick}
-              hidden={hidden}
               canShuffle={picks.length > 1}
               onOpen={setSelected}
               onShuffle={() => setPickSeed((s) => s + 1 + Math.floor(Math.random() * Math.max(1, picks.length - 1)))}

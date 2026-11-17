@@ -1,13 +1,17 @@
 import type { FilmDetails, ListFilm, Provider } from '../api';
+import type { Cat } from '../filters';
 
 export interface Pick {
   film: ListFilm;
   d: FilmDetails;
+  cat: Cat; // the best way to watch it under the current filters…
+  providers: Provider[]; // …and the checked services offering that, most widely known first
 }
+
+const HOW: Record<Cat, string> = { free: 'Free on', subscription: 'Streaming on', rent: 'Rent on', buy: 'Buy on' };
 
 interface Props {
   pick: Pick;
-  hidden: Set<number>;
   canShuffle: boolean;
   onOpen: (film: ListFilm) => void;
   onShuffle: () => void;
@@ -19,13 +23,9 @@ function runtime(min: number | null) {
   return h ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`;
 }
 
-/** "Tonight's pick": one film from the list you can stream free or on subscription right now. */
-export default function Spotlight({ pick, hidden, canShuffle, onOpen, onShuffle }: Props) {
-  const { film, d } = pick;
-  const free = d.availability.free.filter((p) => !hidden.has(p.id));
-  const sub = d.availability.subscription.filter((p) => !hidden.has(p.id));
-  const where: Provider[] = free.length ? free : sub;
-  const how = free.length ? 'Free' : 'Streaming';
+/** "Tonight's pick": one film from the list you can watch right now, free or on a subscription if possible. */
+export default function Spotlight({ pick, canShuffle, onOpen, onShuffle }: Props) {
+  const { film, d, cat, providers: where } = pick;
   const facts = [d.year, runtime(d.info.runtime), d.info.genres.slice(0, 2).join(' / ') || null].filter(Boolean);
 
   return (
@@ -37,7 +37,7 @@ export default function Spotlight({ pick, hidden, canShuffle, onOpen, onShuffle 
         <p className="spotlight-facts">{facts.join(' · ')}</p>
         {d.info.overview && <p className="spotlight-overview">{d.info.overview}</p>}
         <div className="spotlight-where">
-          <span className={`badge ${free.length ? 'free' : 'subscription'}`}>{how} on</span>
+          <span className={`badge ${cat}`}>{HOW[cat]}</span>
           {where.slice(0, 5).map((p) =>
             p.url ? (
               <a key={p.id} href={p.url} target="_blank" rel="noopener noreferrer" className="logo-link" title={`Watch on ${p.name}`}>

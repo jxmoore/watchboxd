@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
-import type { FilmInfo, ListFilm } from '../api';
+import { Fragment, useEffect, useRef } from 'react';
+import type { FilmInfo, ListFilm, Person } from '../api';
 import type { DetailEntry } from '../useFilmDetails';
-import { AvailRows, FilmLinks, titleYear } from './FilmParts';
+import { AvailRows, FilmLinks, availableAnywhere, titleYear } from './FilmParts';
+import { longDate, upcoming } from '../release';
 
 interface Props {
   film: ListFilm;
@@ -17,6 +18,29 @@ function runtimeText(info: FilmInfo) {
   const h = Math.floor(info.runtime / 60), m = info.runtime % 60;
   const t = h ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`;
   return info.kind === 'tv' ? `${t} episodes` : t;
+}
+
+/**
+ * A label and a comma-separated list of names. Each name links to the person's IMDb page, resolved only when clicked
+ * via /api/person (one TMDB request, then cached), so showing the modal costs no extra requests.
+ */
+function PeopleRow({ label, people }: { label: string; people: Person[] }) {
+  if (!people.length) return null;
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd className="cast">
+        {people.map((p, i) => (
+          <Fragment key={p.id}>
+            {i > 0 && ', '}
+            <a href={`/api/person?id=${p.id}`} target="_blank" rel="noopener noreferrer" title={`${p.name} on IMDb`}>
+              {p.name}
+            </a>
+          </Fragment>
+        ))}
+      </dd>
+    </>
+  );
 }
 
 function releasedText(iso: string | null) {
@@ -54,6 +78,17 @@ export default function FilmModal({ film, entry, region, onClose }: Props) {
       ].filter(Boolean)
     : [];
 
+  // Release dates for the selected country (films), and what's coming if it's not available anywhere yet
+  const todayIso = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+  const dateRows: [string, string][] = info
+    ? ([
+        ['In theaters', info.dates.theatrical],
+        ['Digital', info.dates.digital],
+        ['On disc', info.dates.physical],
+      ].filter(([, iso]) => iso) as [string, string][])
+    : [];
+  const soon = d && info && !availableAnywhere(d) ? upcoming(info) : null;
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
@@ -81,20 +116,12 @@ export default function FilmModal({ film, entry, region, onClose }: Props) {
           </div>
 
           <div className="modal-body">
-            <p className="eyebrow">
-              {info?.kind === 'tv' ? 'Series' : 'Film'}
-              {info?.directors.length ? (
-                <>
-                  {' · '}
-                  {info.kind === 'tv' ? 'Created by ' : 'Directed by '}
-                  <span className="credit-name">{info.directors.slice(0, 2).join(' & ')}</span>
-                </>
-              ) : null}
-            </p>
+            <p className="eyebrow">{info?.kind === 'tv' ? 'Series' : 'Film'}</p>
             <h2 id="modal-title">{title}</h2>
 
-            {(facts.length > 0 || info?.rating != null) && (
+            {(facts.length > 0 || info?.rating != null || soon) && (
               <div className="facts">
+                {soon && <span className="soon">{soon}</span>}
                 {facts.map((f) => (
                   <span key={f}>{f}</span>
                 ))}
@@ -111,20 +138,30 @@ export default function FilmModal({ film, entry, region, onClose }: Props) {
             {entry && !entry.ok && <p className="muted">Couldn’t look this one up ({entry.error}).</p>}
             {info?.overview && <p className="overview">{info.overview}</p>}
 
-            {info && (info.cast.length > 0 || info.released) && (
+            {info && (info.cast.length > 0 || info.directors.length > 0 || info.released) && (
               <dl className="meta">
-                {info.released && (
-                  <>
-                    <dt>{info.kind === 'tv' ? 'First aired' : 'Released'}</dt>
-                    <dd>{releasedText(info.released)}</dd>
-                  </>
-                )}
-                {info.cast.length > 0 && (
-                  <>
-                    <dt>Starring</dt>
-                    <dd>{info.cast.join(', ')}</dd>
-                  </>
-                )}
+                {dateRows.length > 0
+                  ? dateRows.map(([label, iso]) => (
+                      <Fragment key={label}>
+                        <dt>{label}</dt>
+                        <dd>
+                          {longDate(iso)}
+                          {iso > todayIso && <span className="upcoming-tag">Upcoming</span>}
+                        </dd>
+                      </Fragment>
+                    ))
+                  : info.released && (
+                      <>
+                        <dt>{info.kind === 'tv' ? 'First aired' : 'Released'}</dt>
+                        <dd>{releasedText(info.released)}</dd>
+                      </>
+                    )}
+                <PeopleRow
+                  label={info.kind === 'tv' ? 'Created by' : info.directors.length > 1 ? 'Directors' : 'Director'}
+                  people={info.directors}
+                />
+                <PeopleRow label={info.writers.length > 1 ? 'Writers' : 'Writer'} people={info.writers} />
+                <PeopleRow label="Starring" people={info.cast} />
               </dl>
             )}
 
