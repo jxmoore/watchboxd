@@ -54,15 +54,27 @@ export default function SearchForm({ initialMode, initialValue, region, busy, on
           />
           {mode === 'user' && <span className="suffix">/watchlist</span>}
         </div>
-        <select aria-label="Country" value={region} onChange={(e) => onRegion(e.target.value)}>
-          {Object.entries(REGIONS).map(([code, name]) => (
-            <option key={code} value={code}>
-              {name}
-            </option>
-          ))}
-        </select>
-        <button className="primary" disabled={busy || !value.trim()}>
-          {busy ? 'Loading…' : 'Look up'}
+        {/* What shows is our own label (full name, or the code on phones); the invisible native select on top
+            does the picking, so the list that opens still has full country names. */}
+        <label className="region" title={REGIONS[region] ?? region}>
+          <span className="region-full">{REGIONS[region] ?? region}</span>
+          <span className="region-code">{region}</span>
+          <svg className="region-caret" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M3 4.5 6 7.5 9 4.5" />
+          </svg>
+          <select aria-label="Country" value={region} onChange={(e) => onRegion(e.target.value)}>
+            {Object.entries(REGIONS).map(([code, name]) => (
+              <option key={code} value={code}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button className="primary" disabled={busy || !value.trim()} aria-label={busy ? 'Loading' : 'Look up'}>
+          <span className="btn-text">{busy ? 'Loading…' : 'Look up'}</span>
+          <svg className={`btn-icon${busy ? ' spin' : ''}`} viewBox="0 0 16 16" aria-hidden="true">
+            {busy ? <path d="M8 2.5a5.5 5.5 0 1 0 5.5 5.5" /> : <path d="M3 8h10M9 4l4 4-4 4" />}
+          </svg>
         </button>
       </div>
     </form>

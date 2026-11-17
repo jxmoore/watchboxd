@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchList, type ListFilm, type ListResponse } from './api';
+import { fetchList, fetchTrending, type ListFilm, type ListResponse } from './api';
 import { useStored } from './storage';
 import { useFilmDetails } from './useFilmDetails';
-import { catsFor, isUnavailable, matches, SHOW_OPTIONS, type Show } from './filters';
+import { catsFor, isUnavailable, matches, SHOW_OPTIONS, visibleRows, type Show } from './filters';
 import { REGIONS } from './regions';
 import { NEEDS_DETAILS, SORT_OPTIONS, sortFilms, type Sort } from './sort';
 import SearchForm, { type Mode } from './components/SearchForm';
@@ -10,8 +10,12 @@ import ServicePicker, { type ServiceCount } from './components/ServicePicker';
 import FilmCard from './components/FilmCard';
 import Pagination from './components/Pagination';
 import FilmModal from './components/FilmModal';
+import Spotlight, { type Pick } from './components/Spotlight';
+import PosterWall from './components/PosterWall';
+import About from './components/About';
 
 const PAGE_SIZES = [24, 48, 96];
+const HERO_POSTERS = 40; // posters on the header's poster wall
 
 function initialSearch(): { mode: Mode; value: string } {
   const p = new URLSearchParams(location.search);
@@ -36,6 +40,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ListFilm | null>(null); // film open in the modal
+  const [pickSeed, setPickSeed] = useState(() => Math.floor(Math.random() * 1000)); // which film Tonight's pick shows
   const listCtrl = useRef<AbortController | null>(null);
   const topRef = useRef<HTMLDivElement>(null);
 
@@ -136,32 +141,82 @@ export default function App() {
   const nowhere = stats.unavailable - stats.failed; // looked up fine, just not available
   const closeModal = useCallback(() => setSelected(null), []);
 
+  // Tonight's pick: films in the current results you can stream free or on a checked subscription.
+  const picks = useMemo(() => {
+    const out: Pick[] = [];
+    for (const f of filtered) {
+      const e = details[f.slug];
+      if (e?.ok && visibleRows(e.data, 'stream', hidden).length) out.push({ film: f, d: e.data });
+    }
+    return out;
+  }, [filtered, details, hidden]);
+  const pick = picks.length ? picks[pickSeed % picks.length] : null;
+
+  // First posters from the list (in list order) for the header's poster wall.
+  const heroPosters = useMemo(() => {
+    const out: { src: string; title: string }[] = [];
+    for (const f of films) {
+      const e = details[f.slug];
+      const src = e?.ok ? e.data.poster ?? e.data.posterLarge : null; // small posters are plenty for the wall
+      if (src) out.push({ src, title: e!.ok ? e.data.title : f.name });
+      if (out.length === HERO_POSTERS) break;
+    }
+    return out;
+  }, [films, details]);
+
+  // With no list (or until the list's posters arrive), the wall shows this week's trending films in random order.
+  const [trending, setTrending] = useState<{ src: string; title: string }[]>([]);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetchTrending(ctrl.signal)
+      .then((all) => {
+        const deck = [...all];
+        for (let i = deck.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [deck[i], deck[j]] = [deck[j], deck[i]];
+        }
+        setTrending(deck.slice(0, HERO_POSTERS));
+      })
+      .catch(() => {}); // decorative; outlines stay if it fails
+    return () => ctrl.abort();
+  }, []);
+  const listPostersReady = !!list && heroPosters.length >= Math.min(12, films.length);
+  // A loaded list's posters lead; trending films top the wall up when the list is short.
+  const wallPosters = listPostersReady ? heroPosters : trending.length ? trending : heroPosters;
+  const wallFillers = listPostersReady ? trending : [];
+
   return (
     <>
     <header className="masthead">
-      <div className="masthead-inner">
-        <a className="brand" href="/">
-          watchboxd<span>.</span>
-        </a>
-        <span className="eyebrow">Letterboxd · where to watch</span>
-      </div>
+      <a className="brand" href="/">
+        <svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h15A1.5 1.5 0 0 1 21 7.5V10a2 2 0 0 0 0 4v2.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 16.5V14a2 2 0 0 0 0-4Z" />
+          <path className="perf" d="M15 7.5v9" />
+        </svg>
+        watchboxd
+      </a>
+      <About />
     </header>
+
     <main>
       <section className="hero">
-        <h1>
-          Your list, and where it’s <em>streaming.</em>
-        </h1>
-        <p className="lede">Find where to watch everything on your Letterboxd watchlist or lists.</p>
+        <PosterWall posters={wallPosters} fillers={wallFillers} />
+        <div className="hero-copy">
+          <p className="kicker">Now showing · your Letterboxd lists</p>
+          <h1>
+            Where’s it <em>streaming?</em>
+          </h1>
+          <p className="lede">Bring a watchlist or any list, and see what’s free, on your subscriptions, or to rent tonight.</p>
+        </div>
+        <SearchForm
+          initialMode={initial.mode}
+          initialValue={initial.value}
+          region={region}
+          busy={loading}
+          onRegion={setRegion}
+          onSubmit={lookup}
+        />
       </section>
-
-      <SearchForm
-        initialMode={initial.mode}
-        initialValue={initial.value}
-        region={region}
-        busy={loading}
-        onRegion={setRegion}
-        onSubmit={lookup}
-      />
 
       {error && <p className="error">{error}</p>}
       {loading && <p className="muted status">Reading the list from Letterboxd…</p>}
@@ -196,6 +251,16 @@ export default function App() {
               </div>
             )}
           </section>
+
+          {pick && (
+            <Spotlight
+              pick={pick}
+              hidden={hidden}
+              canShuffle={picks.length > 1}
+              onOpen={setSelected}
+              onShuffle={() => setPickSeed((s) => s + 1 + Math.floor(Math.random() * Math.max(1, picks.length - 1)))}
+            />
+          )}
 
           <section className="toolbar">
             <ServicePicker services={stats.services} allIds={stats.allIds} hidden={hidden} onChange={setHidden} />
@@ -287,12 +352,6 @@ export default function App() {
           </footer>
         </>
       )}
-
-      <p className="credit">
-        Streaming data from <a href="https://www.justwatch.com" target="_blank" rel="noopener noreferrer">JustWatch</a> via{' '}
-        <a href="https://www.themoviedb.org" target="_blank" rel="noopener noreferrer">TMDB</a>. This product uses the TMDB API but
-        is not endorsed or certified by TMDB.
-      </p>
 
       {selected && (
         <FilmModal film={selected} entry={details[selected.slug]} region={region} onClose={closeModal} />

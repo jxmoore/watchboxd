@@ -2,6 +2,7 @@ import { HttpError } from './http.js';
 import type { TmdbRef } from './letterboxd.js';
 import { getDirectLinks } from './justwatch.js';
 import { searchLink } from './search-links.js';
+import { buildCatalog, canonicalFor, type Canonical } from './providers.js';
 
 const IMG = 'https://image.tmdb.org/t/p';
 
@@ -12,6 +13,8 @@ export interface Provider {
   /** Where clicking the logo goes: the film on that service (direct), the service's search, or null. */
   url: string | null;
   linkKind: 'direct' | 'search' | null;
+  /** Lower = more widely known (household names first, then TMDB's ranking for the country). Lists are sorted by it. */
+  rank: number;
 }
 
 export interface Availability {
@@ -64,6 +67,20 @@ async function tmdb<T = any>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface TrendingPoster {
+  title: string;
+  src: string;
+}
+
+/** This week's trending films on TMDB that have posters (about 40: two pages). */
+export async function getTrendingPosters(): Promise<TrendingPoster[]> {
+  const pages = await Promise.all([1, 2].map((p) => tmdb(`/trending/movie/week?page=${p}`)));
+  return pages
+    .flatMap((p) => p.results ?? [])
+    .filter((m: any) => m.poster_path && !m.adult)
+    .map((m: any) => ({ title: m.title || m.name, src: `${IMG}/w342${m.poster_path}` }));
+}
+
 /** Fallback when Letterboxd has no TMDB id (often a film TMDB files as TV). name is "Title (Year)". */
 export async function searchTmdb(name: string): Promise<TmdbRef | null> {
   const m = name.match(/^(.*?)(?:\s+\((\d{4})\))?$/)!;
@@ -75,6 +92,25 @@ export async function searchTmdb(name: string): Promise<TmdbRef | null> {
   return null;
 }
 
+// Each country's full list of services, used to merge variants. Fetched once per country per server instance.
+const catalogs = new Map<string, Promise<Map<string, Canonical> | null>>();
+function catalogFor(region: string) {
+  let c = catalogs.get(region);
+  if (!c) {
+    c = Promise.all([
+      tmdb(`/watch/providers/movie?watch_region=${region}`),
+      tmdb(`/watch/providers/tv?watch_region=${region}`),
+    ])
+      .then(([m, t]) => buildCatalog([...(m.results ?? []), ...(t.results ?? [])], IMG, region))
+      .catch(() => {
+        catalogs.delete(region); // try again next time; merging still works by name meanwhile
+        return null;
+      });
+    catalogs.set(region, c);
+  }
+  return c;
+}
+
 export async function getDetails(ref: TmdbRef, region: string): Promise<FilmDetails> {
   const ratings = ref.type === 'movie' ? 'release_dates' : 'content_ratings';
   const d = await tmdb(`/${ref.type}/${ref.id}?append_to_response=watch/providers,external_ids,credits,${ratings}`);
@@ -83,24 +119,34 @@ export async function getDetails(ref: TmdbRef, region: string): Promise<FilmDeta
   const title: string = d.title || d.name;
 
   const anyProviders = r && ['free', 'ads', 'flatrate', 'rent', 'buy'].some((k) => r[k]?.length);
-  const direct = anyProviders ? await getDirectLinks(ref, title, region) : new Map<string, string>();
+  const [direct, catalog] = anyProviders
+    ? await Promise.all([getDirectLinks(ref, title, region), catalogFor(region)])
+    : [new Map<string, string>(), null];
 
-  // Direct link for this category, else direct link for the service in any category, else the service's search.
+  // Each offer links to where it actually lives: a direct link for this category, else for the service in any
+  // category, else that variant's search (an Amazon channel searches Amazon). Variants of one service are then
+  // merged under the service's own name and logo, keeping the best link among them.
   const slim = (cat: string, list: any[] = []): Provider[] => {
-    const seen = new Set<number>();
-    return list
-      .filter((p) => !seen.has(p.provider_id) && seen.add(p.provider_id))
-      .map((p) => {
-        const url = direct.get(`${cat}:${p.provider_id}`) ?? direct.get(`*:${p.provider_id}`);
-        const search = url ? null : searchLink(p.provider_name, title);
-        return {
-          id: p.provider_id,
-          name: p.provider_name,
-          logo: `${IMG}/w92${p.logo_path}`,
-          url: url ?? search,
-          linkKind: url ? 'direct' : search ? 'search' : null,
-        };
-      });
+    const rank = (p: Provider) => (p.linkKind === 'direct' ? 2 : p.linkKind === 'search' ? 1 : 0);
+    const merged = new Map<number, Provider>();
+    for (const p of list) {
+      const url = direct.get(`${cat}:${p.provider_id}`) ?? direct.get(`*:${p.provider_id}`);
+      const search = url ? null : searchLink(p.provider_name, title);
+      const ownLogo = `${IMG}/w92${p.logo_path}`;
+      const c = canonicalFor(p.provider_name, catalog, ownLogo);
+      const entry: Provider = {
+        id: c.id,
+        name: c.name,
+        logo: c.logo ?? ownLogo,
+        url: url ?? search,
+        linkKind: url ? 'direct' : search ? 'search' : null,
+        rank: c.rank,
+      };
+      const cur = merged.get(c.id);
+      if (!cur || rank(entry) > rank(cur)) merged.set(c.id, entry);
+    }
+    // Most widely known services first (Netflix, Prime Video…); niche ones last
+    return [...merged.values()].sort((a, b) => a.rank - b.rank);
   };
 
   return {

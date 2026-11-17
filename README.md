@@ -26,9 +26,11 @@ Every push to `main` redeploys. (Or skip GitHub: `npx vercel` from this folder, 
 | --- | --- | --- |
 | `GET /api/list?q=jomo88` | Reads every page of the Letterboxd list (username → `/watchlist/`) | 10 min |
 | `GET /api/film?slug=…&name=…&region=US` | Letterboxd film page → TMDB id → title, poster, IMDb id, details for the film modal (overview, cast, runtime, rating…), streaming options | 12 h |
+| `GET /api/trending` | This week's trending films on TMDB, dealt at random into the header before a list is loaded | 6 h |
 
 - The browser loads film details six at a time, current page first, then the rest of the list in the background so filters cover everything.
 - Service logos are links. Direct links to the film on each service come from JustWatch's GraphQL API (`lib/justwatch.ts`), matched by TMDB id. When there's no direct link, the logo opens that service's search for the title (`lib/search-links.ts`; the tooltip says which kind). On a sample watchlist: 77% direct, 21% search, 2% no link.
+- Services are listed most widely known first: a short pinned list of household names (Netflix, Prime Video, Disney+…), then TMDB's popularity ranking for the country. Variants of one service are merged (`lib/providers.ts`): plans ("Netflix Standard with Ads"), channels sold through Amazon, Apple TV or Roku ("Shudder Amazon Channel"), free tiers and stores of the same app, and spellings ("AMC Plus" / "AMC+"). Each logo still links to wherever that offer lives. Amazon Video (rent/buy) stays separate from Prime Video.
 - If Letterboxd has no TMDB id for a film (or a stale one), it falls back to a TMDB title + year search.
 - The services dropdown lists every service carrying films from the list, all checked. Unchecking one hides films available only on unchecked services. It resets on each lookup.
 - Films available nowhere in your country, or that couldn't be looked up on TMDB, are hidden by default. The "Show unavailable" switch (or the note at the end of the results) adds them back to any filter; with every service unchecked, it shows only them. It resets on each lookup.
@@ -39,4 +41,4 @@ Every push to `main` redeploys. (Or skip GitHub: `npx vercel` from this folder, 
 - Letterboxd has no public API; this reads its HTML. If they change their markup, fix the regexes in `lib/letterboxd.ts`.
 - Letterboxd sits behind Cloudflare, which may challenge requests from cloud servers. If lookups fail on Vercel but work locally, that's the cause.
 - JustWatch's API is unofficial and undocumented. If it changes or blocks requests, logos quietly fall back to search links; nothing else breaks.
-- Streaming data comes from JustWatch via TMDB, and the credit in the footer is required by TMDB's terms.
+- Streaming data comes from JustWatch via TMDB. The credits in the header's About panel are required by TMDB's terms; keep them.

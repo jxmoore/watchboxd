@@ -20,8 +20,11 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 export const fetchList = (q: string, signal?: AbortSignal) =>
   getJson<ListResponse>(`/api/list?q=${encodeURIComponent(q)}`, signal);
 
+export const fetchTrending = (signal?: AbortSignal) =>
+  getJson<{ posters: { title: string; src: string }[] }>('/api/trending', signal).then((r) => r.posters);
+
 // Bump when the shape of /api/film's response changes, so browsers and the CDN don't serve the old shape.
-const FILM_API_VERSION = 3;
+const FILM_API_VERSION = 7;
 
 export const fetchFilm = (film: ListFilm, region: string, signal?: AbortSignal) =>
   getJson<FilmDetails>(
