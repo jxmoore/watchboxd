@@ -24,7 +24,6 @@ import Pagination from "./components/Pagination";
 import FilmModal from "./components/FilmModal";
 import Spotlight, { type Pick } from "./components/Spotlight";
 import PosterWall from "./components/PosterWall";
-import About from "./components/About";
 
 const PAGE_SIZES = [24, 48, 96];
 const HERO_POSTERS = 40; // posters on the header's poster wall
