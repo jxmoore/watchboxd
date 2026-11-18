@@ -482,6 +482,28 @@ select option { background: var(--surface-2); color: var(--text); }
 .logo-link:hover, .logo-link:focus-visible { transform: translateY(-2px); box-shadow: 0 0 0 2px var(--gold), 0 6px 16px -4px rgb(243 194 107 / 0.5); outline: none; }
 
 .shimmer { background: linear-gradient(90deg, rgb(255 255 255 / 0.03) 0%, rgb(255 255 255 / 0.08) 50%, rgb(255 255 255 / 0.03) 100%); background-size: 200% 100%; animation: shimmer 1.4s infinite linear; }
+
+/* ---------- loading skeletons: the shapes of the real content, with a soft shimmer ---------- */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sk {
+  display: block; border-radius: 6px;
+  background: linear-gradient(90deg, rgb(255 255 255 / 0.035) 0%, rgb(255 255 255 / 0.075) 50%, rgb(255 255 255 / 0.035) 100%);
+  background-size: 200% 100%; animation: shimmer 1.6s infinite linear;
+}
+.sk-summary { display: flex; flex-direction: column; gap: 10px; }
+.sk-eyebrow { width: 110px; height: 10px; }
+.sk-title { width: min(360px, 70vw); height: 34px; border-radius: 8px; }
+.sk-stats { width: min(300px, 60vw); height: 12px; }
+.sk-heading { width: 60%; height: 34px; margin: 14px 0 12px; border-radius: 8px; }
+.sk-line { height: 12px; margin-top: 8px; }
+.sk-button { width: 104px; height: 40px; margin-top: 22px; border-radius: var(--pill); }
+.sk-spotlight { min-height: 300px; }
+.sk-poster { width: 190px; aspect-ratio: 2 / 3; border-radius: var(--r); }
+@media (max-width: 720px) { .sk-poster { display: none; } }
+.sk-tile { cursor: default; animation: fade 0.4s ease both; }
+.sk-tile .tile-poster { box-shadow: none; }
+/* Real posters arrive in one go, with a gentle fade */
+.grid.settle-in { animation: fade 0.35s ease; }
 .shimmer.line { height: 26px; width: 70%; border-radius: var(--pill); }
 @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
@@ -655,7 +677,7 @@ select option { background: var(--surface-2); color: var(--text); }
 .about a:hover { text-decoration-color: var(--gold); }
 
 @media (prefers-reduced-motion: reduce) {
-  .shimmer, .strip-track, .strip-frame img, .wall-grid, .wall-tile img { animation: none; }
+  .shimmer, .sk, .sk-tile, .grid.settle-in, .strip-track, .strip-frame img, .wall-grid, .wall-tile img { animation: none; }
   .tile-poster, .tile-poster > img, .modal, .modal-backdrop, .modal-close { transition: none; animation: none; }
   .tile:hover .tile-poster, .tile:hover .tile-poster > img { transform: none; }
 }

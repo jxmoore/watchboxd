@@ -27,6 +27,7 @@ import Pagination from "./components/Pagination";
 import FilmModal from "./components/FilmModal";
 import Spotlight, { type Pick } from "./components/Spotlight";
 import PosterWall from "./components/PosterWall";
+import { GridSkeleton, SpotlightSkeleton, SummarySkeleton } from "./components/Skeletons";
 
 const PAGE_SIZES = [24, 48, 96];
 const HERO_POSTERS = 40; // posters on the header's poster wall
@@ -77,9 +78,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<ListFilm | null>(null); // film open in the modal
-  const [pickSeed, setPickSeed] = useState(() =>
-    Math.floor(Math.random() * 1000),
-  ); // which film Tonight's pick shows
   const listCtrl = useRef<AbortController | null>(null);
   const topRef = useRef<HTMLDivElement>(null);
 
@@ -231,6 +229,21 @@ export default function App() {
 
   const stillLoading = films.length > 0 && stats.loaded < films.length;
   const nowhere = stats.unavailable - stats.failed; // looked up fine, just not available
+
+  // ---- Settling ----
+  // When a list first loads, the grid and Tonight's pick wait (showing placeholders) until the first page has
+  // settled: its films have loaded (they're fetched first), or enough of the list has to fill it, or everything has.
+  // Then they appear in one go instead of posters popping in and out as each film is checked. Once settled, a list
+  // stays settled.
+  const [settledList, setSettledList] = useState<ListResponse | null>(null);
+  const settled = !!list && settledList === list;
+  const pageSettled =
+    !stillLoading ||
+    (pageFilms.length >= Math.min(pageSize, films.length) && pageFilms.every((f) => details[f.slug])) ||
+    stats.loaded >= Math.min(films.length, pageSize * 3);
+  useEffect(() => {
+    if (list && pageSettled && settledList !== list) setSettledList(list);
+  }, [list, pageSettled, settledList]);
   // ---- Film modal and the address bar ----
   // Opening a film adds a history entry with ?film=<slug>, so the address is shareable and Back (including a phone's
   // back gesture) closes the modal instead of leaving the page. Previous/next swap the film in place.
@@ -307,7 +320,19 @@ export default function App() {
     }
     return watchNow.length ? watchNow : rentals;
   }, [matching, details, hidden, show]);
-  const pick = picks.length ? picks[pickSeed % picks.length] : null;
+
+  // The pick is chosen once the first page has settled, then kept: it only changes on Shuffle, or if the filters
+  // rule it out. (Re-picking as films loaded made it flash from film to film.)
+  const [pickSlug, setPickSlug] = useState<string | null>(null);
+  const pick = settled ? (picks.find((p) => p.film.slug === pickSlug) ?? null) : null;
+  useEffect(() => {
+    if (!settled || !picks.length || picks.some((p) => p.film.slug === pickSlug)) return;
+    setPickSlug(picks[Math.floor(Math.random() * picks.length)].film.slug);
+  }, [settled, picks, pickSlug]);
+  const shufflePick = () => {
+    const others = picks.filter((p) => p.film.slug !== pickSlug);
+    if (others.length) setPickSlug(others[Math.floor(Math.random() * others.length)].film.slug);
+  };
 
   // First posters from the list (in list order) for the header's poster wall.
   const heroPosters = useMemo(() => {
@@ -339,15 +364,21 @@ export default function App() {
       .catch(() => {}); // decorative; outlines stay if it fails
     return () => ctrl.abort();
   }, []);
-  const listPostersReady =
-    !!list && heroPosters.length >= Math.min(12, films.length);
-  // A loaded list's posters lead; trending films top the wall up when the list is short.
-  const wallPosters = listPostersReady
-    ? heroPosters
-    : trending.length
-      ? trending
-      : heroPosters;
-  const wallFillers = listPostersReady ? trending : [];
+  // The wall switches to a list's posters once, then stays put. Until enough have loaded to fill it (up to 40, or
+  // the whole list has been checked) it keeps showing what it had, trending films or the previous list. Swapping in
+  // each poster as it loaded reshuffled every tile, over and over. Trending films top up short lists.
+  const [wall, setWall] = useState<{
+    list: ListResponse;
+    posters: { src: string; title: string }[];
+    fillers: { src: string; title: string }[];
+  } | null>(null);
+  const wallReady = !!list && (heroPosters.length >= HERO_POSTERS || !stillLoading);
+  useEffect(() => {
+    if (!list || !wallReady || wall?.list === list || !heroPosters.length) return;
+    setWall({ list, posters: heroPosters, fillers: trending });
+  }, [list, wallReady, wall, heroPosters, trending]);
+  const wallPosters = wall ? wall.posters : trending.length ? trending : heroPosters;
+  const wallFillers = wall ? wall.fillers : [];
 
   return (
     <>
@@ -388,7 +419,14 @@ export default function App() {
 
         {error && <p className="error">{error}</p>}
         {loading && (
-          <p className="muted status">Reading the list from Letterboxd…</p>
+          <>
+            <p className="sr-only" role="status">
+              Reading the list from Letterboxd…
+            </p>
+            <SummarySkeleton />
+            <SpotlightSkeleton />
+            <GridSkeleton count={12} />
+          </>
         )}
 
         {list && (
@@ -433,16 +471,11 @@ export default function App() {
                 pick={pick}
                 canShuffle={picks.length > 1}
                 onOpen={openFilm}
-                onShuffle={() =>
-                  setPickSeed(
-                    (s) =>
-                      s +
-                      1 +
-                      Math.floor(Math.random() * Math.max(1, picks.length - 1)),
-                  )
-                }
+                onShuffle={shufflePick}
               />
             )}
+            {/* Placeholder while the first page settles (or for the moment before a pick is chosen) */}
+            {!pick && (!settled || picks.length > 0) && <SpotlightSkeleton />}
 
             <section className="toolbar">
               <ServicePicker
@@ -517,31 +550,35 @@ export default function App() {
               </button>
             </section>
 
-            {!unfiltered && stillLoading && (
+            {settled && !unfiltered && stillLoading && (
               <p className="muted note">
                 Still checking the rest of the list; more matches may appear.
               </p>
             )}
-            {unfiltered && stillLoading && NEEDS_DETAILS.includes(sort) && (
+            {settled && unfiltered && stillLoading && NEEDS_DETAILS.includes(sort) && (
               <p className="muted note">
                 Still checking the rest of the list; the order will settle once
                 it’s done.
               </p>
             )}
 
-            <div className="grid">
-              {pageFilms.map((f) => (
-                <FilmCard
-                  key={f.slug}
-                  film={f}
-                  entry={details[f.slug]}
-                  show={show}
-                  hidden={hidden}
-                  onOpen={openFilm}
-                />
-              ))}
-            </div>
-            {!pageFilms.length && !stillLoading && (
+            {settled ? (
+              <div className="grid settle-in">
+                {pageFilms.map((f) => (
+                  <FilmCard
+                    key={f.slug}
+                    film={f}
+                    entry={details[f.slug]}
+                    show={show}
+                    hidden={hidden}
+                    onOpen={openFilm}
+                  />
+                ))}
+              </div>
+            ) : (
+              <GridSkeleton count={Math.min(pageSize, films.length)} />
+            )}
+            {settled && !pageFilms.length && !stillLoading && (
               <p className="muted empty-state">
                 {findKey
                   ? `Nothing matching “${find.trim()}” in these results.`
@@ -550,7 +587,7 @@ export default function App() {
             )}
 
             {/* End of the results: say what's hidden and offer to show it. */}
-            {!showUnavailable && stats.unavailable > 0 && current === pages && (
+            {settled && !showUnavailable && stats.unavailable > 0 && current === pages && (
               <div className="hidden-note">
                 <p>
                   {stillLoading ? "So far, " : ""}
@@ -584,6 +621,7 @@ export default function App() {
               </div>
             )}
 
+            {settled && (
             <footer className="pager-row">
               <Pagination page={current} pages={pages} onPage={goTo} />
               <label className="muted per-page">
@@ -598,6 +636,7 @@ export default function App() {
                 </select>
               </label>
             </footer>
+            )}
           </>
         )}
 

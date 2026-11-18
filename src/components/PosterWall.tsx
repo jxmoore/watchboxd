@@ -37,7 +37,7 @@ export default function PosterWall({ posters, fillers = [] }: Props) {
       <div className="wall-grid">
         {tiles.map((p, i) => (
           <div key={i} className={`wall-tile${p ? '' : ' empty'}`}>
-            {p && <img src={p.src} alt="" loading={i < 36 ? 'eager' : 'lazy'} />}
+            {p && <img key={p.src} src={p.src} alt="" loading={i < 36 ? 'eager' : 'lazy'} />}
           </div>
         ))}
       </div>
