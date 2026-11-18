@@ -23,8 +23,17 @@ export const fetchList = (q: string, signal?: AbortSignal) =>
 export const fetchTrending = (signal?: AbortSignal) =>
   getJson<{ posters: { title: string; src: string }[] }>('/api/trending', signal).then((r) => r.posters);
 
+export interface PopularList {
+  url: string;
+  title: string;
+  owner: string;
+  count: number | null;
+}
+export const fetchPopular = (signal?: AbortSignal) =>
+  getJson<{ lists: PopularList[] }>('/api/popular', signal).then((r) => r.lists);
+
 // Bump when the shape of /api/film's response changes, so browsers and the CDN don't serve the old shape.
-const FILM_API_VERSION = 10;
+const FILM_API_VERSION = 11;
 
 export const fetchFilm = (film: ListFilm, region: string, signal?: AbortSignal) =>
   getJson<FilmDetails>(

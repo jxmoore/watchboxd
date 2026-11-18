@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchList,
+  fetchPopular,
   fetchTrending,
   type ListFilm,
   type ListResponse,
+  type PopularList,
 } from "./api";
-import { useStored } from "./storage";
-import { useFilmDetails } from "./useFilmDetails";
+import { load, save, useStored } from "./storage";
+import { useServicePrefs } from "./servicePrefs";
+import { useFilmDetails, type DetailEntry } from "./useFilmDetails";
 import {
   catsFor,
   isUnavailable,
@@ -28,15 +31,33 @@ import PosterWall from "./components/PosterWall";
 const PAGE_SIZES = [24, 48, 96];
 const HERO_POSTERS = 40; // posters on the header's poster wall
 
-function initialSearch(): { mode: Mode; value: string } {
+const normalizeTitle = (s: string) =>
+  s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/** Matches the Letterboxd name ("Amélie (2001)") and, once loaded, TMDB's title (which can differ, e.g. for foreign films). */
+function titleMatches(f: ListFilm, e: DetailEntry | undefined, key: string) {
+  if (normalizeTitle(f.name).includes(key)) return true;
+  return !!e?.ok && normalizeTitle(e.data.title).includes(key);
+}
+
+// The last list looked up successfully, so a plain visit (no ?u= or ?list= in the address) reopens it. Only the
+// lookup itself is saved; the films and their details are fetched again (mostly from cache).
+const LAST_LIST = "wtw.lastList";
+type Search = { mode: Mode; value: string };
+
+function initialSearch(): Search {
   const p = new URLSearchParams(location.search);
   if (p.get("u")) return { mode: "user", value: p.get("u")! };
   if (p.get("list")) return { mode: "url", value: p.get("list")! };
+  const last = load<Search | null>(LAST_LIST, null);
+  if (last && (last.mode === "user" || last.mode === "url") && typeof last.value === "string" && last.value) return last;
   return { mode: "user", value: "" };
 }
 
 export default function App() {
   const [initial] = useState(initialSearch);
+  // What the search box shows; replaced (remounting the form) when a lookup starts from elsewhere, like "Random list"
+  const [formSeed, setFormSeed] = useState({ ...initial, n: 0 });
   const [region, setRegion] = useStored("wtw.region", "US");
   const [storedShow, setShow] = useStored<Show>("wtw.show", "all");
   const show: Show = SHOW_OPTIONS.some(([k]) => k === storedShow)
@@ -48,8 +69,9 @@ export default function App() {
     : "list";
   const [pageSize, setPageSize] = useStored("wtw.pageSize", 24);
   const [page, setPage] = useState(1);
-  const [hidden, setHidden] = useState<Set<number>>(() => new Set()); // unchecked services; resets per lookup
-  const [showUnavailable, setShowUnavailable] = useState(false); // films available nowhere; off per lookup
+  // Unchecked services and "Show unavailable" are remembered in the browser, like the filter, sort and page size
+  const { hidden, setHidden, noteServices } = useServicePrefs();
+  const [showUnavailable, setShowUnavailable] = useStored("wtw.showUnavailable", false);
 
   const [list, setList] = useState<ListResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -68,8 +90,6 @@ export default function App() {
     setError(null);
     setList(null);
     setPage(1);
-    setHidden(new Set());
-    setShowUnavailable(false);
     const url = new URL(location.href);
     url.search = new URLSearchParams(
       mode === "user" ? { u: value } : { list: value },
@@ -77,6 +97,7 @@ export default function App() {
     history.replaceState(null, "", url);
     try {
       setList(await fetchList(value, ctrl.signal));
+      save(LAST_LIST, { mode, value }); // only lists that actually loaded
     } catch (e) {
       if ((e as Error).name !== "AbortError") setError((e as Error).message);
     } finally {
@@ -84,15 +105,30 @@ export default function App() {
     }
   }, []);
 
+  // "Random list": one of Letterboxd's popular lists, picked at random (preferring ones that load quickly), shown in
+  // the search box and looked up. The popular lists are fetched once, on first use.
+  const popular = useRef<PopularList[] | null>(null);
+  const randomList = useCallback(async () => {
+    try {
+      if (!popular.current) {
+        const all = await fetchPopular();
+        const quick = all.filter((l) => l.count != null && l.count <= 300);
+        popular.current = quick.length ? quick : all;
+      }
+      const current = new URLSearchParams(location.search).get("list");
+      const pool = popular.current.filter((l) => l.url !== current);
+      if (!pool.length) return;
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      setFormSeed((s) => ({ mode: "url", value: pick.url, n: s.n + 1 }));
+      lookup("url", pick.url);
+    } catch {
+      setError("Couldn’t reach Letterboxd’s popular lists just now. Try again in a moment.");
+    }
+  }, [lookup]);
+
   useEffect(() => {
     if (initial.value) lookup(initial.mode, initial.value);
   }, [initial, lookup]);
-
-  // Services differ by country, so start fresh when it changes.
-  useEffect(() => {
-    setHidden(new Set());
-    setShowUnavailable(false);
-  }, [region]);
 
   const films: ListFilm[] = useMemo(() => list?.films ?? [], [list]);
 
@@ -100,16 +136,23 @@ export default function App() {
   const [priority, setPriority] = useState<string[]>([]);
   const details = useFilmDetails(films, region, priority);
 
-  const filtered = useMemo(
+  // "Find a film": narrows the results by title, ignoring case and accents
+  const [find, setFind] = useState("");
+  const findKey = normalizeTitle(find.trim());
+  // Films matching the filters (Tonight's pick draws from these, so it doesn't jump around while you type)…
+  const matching = useMemo(
     () =>
       sortFilms(
-        films.filter((f) =>
-          matches(show, hidden, details[f.slug], showUnavailable),
-        ),
+        films.filter((f) => matches(show, hidden, details[f.slug], showUnavailable)),
         sort,
         details,
       ),
     [films, details, show, hidden, showUnavailable, sort],
+  );
+  // …and the ones the grid shows: also narrowed by "Find a film"
+  const filtered = useMemo(
+    () => (findKey ? matching.filter((f) => titleMatches(f, details[f.slug], findKey)) : matching),
+    [matching, details, findKey],
   );
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const current = Math.min(page, pages);
@@ -118,14 +161,9 @@ export default function App() {
     current * pageSize,
   );
 
-  const unfiltered = show === "all" && !hidden.size;
-  const prioritySlugs = unfiltered ? pageFilms.map((f) => f.slug) : [];
-  const priorityKey = prioritySlugs.join("|");
-  useEffect(() => setPriority(prioritySlugs), [priorityKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
   useEffect(
     () => setPage(1),
-    [show, hidden, pageSize, region, showUnavailable, sort],
+    [show, hidden, pageSize, region, showUnavailable, sort, findKey],
   );
 
   // Service list + counts follow the category filter (e.g. no rental stores under "Free or subscription").
@@ -174,6 +212,18 @@ export default function App() {
     };
   }, [films, details, show]);
 
+  // Remember services as they appear, so ones the viewer hasn't seen get a sensible default
+  const allIdsKey = stats.allIds.join(",");
+  useEffect(() => noteServices(stats.allIds), [allIdsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "Unfiltered" means nothing in this list is hidden: remembered unchecks of services this list doesn't have don't count
+  const hidesHere = stats.allIds.some((id) => hidden.has(id));
+  const unfiltered = show === "all" && !hidesHere;
+  // Load the films on screen first whenever placeholders are showing (the "All" filter)
+  const prioritySlugs = show === "all" ? pageFilms.map((f) => f.slug) : [];
+  const priorityKey = prioritySlugs.join("|");
+  useEffect(() => setPriority(prioritySlugs), [priorityKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const goTo = (p: number) => {
     setPage(p);
     topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -181,14 +231,65 @@ export default function App() {
 
   const stillLoading = films.length > 0 && stats.loaded < films.length;
   const nowhere = stats.unavailable - stats.failed; // looked up fine, just not available
-  const closeModal = useCallback(() => setSelected(null), []);
+  // ---- Film modal and the address bar ----
+  // Opening a film adds a history entry with ?film=<slug>, so the address is shareable and Back (including a phone's
+  // back gesture) closes the modal instead of leaving the page. Previous/next swap the film in place.
+  const pushedFilm = useRef(false); // did we add the history entry for the open film?
+  const filmUrl = (slug: string | null) => {
+    const url = new URL(location.href);
+    if (slug) url.searchParams.set("film", slug);
+    else url.searchParams.delete("film");
+    return url;
+  };
+  const openFilm = useCallback((film: ListFilm) => {
+    if (pushedFilm.current) history.replaceState({ film: film.slug }, "", filmUrl(film.slug));
+    else {
+      history.pushState({ film: film.slug }, "", filmUrl(film.slug));
+      pushedFilm.current = true;
+    }
+    setSelected(film);
+  }, []);
+  const closeModal = useCallback(() => {
+    if (pushedFilm.current) history.back(); // popstate below clears the selection
+    else {
+      history.replaceState(null, "", filmUrl(null)); // opened from a shared link: nothing of ours to go back to
+      setSelected(null);
+    }
+  }, []);
+  useEffect(() => {
+    const onPop = () => {
+      pushedFilm.current = false;
+      const slug = new URLSearchParams(location.search).get("film");
+      setSelected(slug ? films.find((f) => f.slug === slug) ?? null : null);
+    };
+    addEventListener("popstate", onPop);
+    return () => removeEventListener("popstate", onPop);
+  }, [films]);
+  // A shared link (?film=…) opens that film once its list has loaded
+  const [initialFilm] = useState(() => new URLSearchParams(location.search).get("film"));
+  const openedInitial = useRef(false);
+  useEffect(() => {
+    if (!initialFilm || openedInitial.current || !films.length) return;
+    openedInitial.current = true;
+    const f = films.find((x) => x.slug === initialFilm);
+    // (the lookup rewrote the address without ?film, so put it back while the film is open)
+    if (f) {
+      history.replaceState({ film: f.slug }, "", filmUrl(f.slug));
+      setSelected(f);
+    }
+  }, [films, initialFilm]);
+
+  // Previous / next follow the current results, in their current order
+  const selectedIndex = selected ? filtered.findIndex((f) => f.slug === selected.slug) : -1;
+  const prevFilm = selectedIndex > 0 ? filtered[selectedIndex - 1] : null;
+  const nextFilm = selectedIndex >= 0 && selectedIndex < filtered.length - 1 ? filtered[selectedIndex + 1] : null;
 
   // Tonight's pick: a film in the current results you can watch free or on a checked subscription. If there are
   // none (say only a rental store is checked, or the "Rent / buy only" filter is on), a rental instead.
   const picks = useMemo(() => {
     const watchNow: Pick[] = [];
     const rentals: Pick[] = [];
-    for (const f of filtered) {
+    for (const f of matching) {
       const e = details[f.slug];
       if (!e?.ok) continue;
       const best = visibleRows(e.data, show, hidden)[0]; // free → subscription → rent → buy
@@ -205,7 +306,7 @@ export default function App() {
       ).push(pick);
     }
     return watchNow.length ? watchNow : rentals;
-  }, [filtered, details, hidden, show]);
+  }, [matching, details, hidden, show]);
   const pick = picks.length ? picks[pickSeed % picks.length] : null;
 
   // First posters from the list (in list order) for the header's poster wall.
@@ -274,12 +375,14 @@ export default function App() {
             </p>
           </div>
           <SearchForm
-            initialMode={initial.mode}
-            initialValue={initial.value}
+            key={formSeed.n}
+            initialMode={formSeed.mode}
+            initialValue={formSeed.value}
             region={region}
             busy={loading}
             onRegion={setRegion}
             onSubmit={lookup}
+            onRandom={randomList}
           />
         </section>
 
@@ -329,7 +432,7 @@ export default function App() {
               <Spotlight
                 pick={pick}
                 canShuffle={picks.length > 1}
-                onOpen={setSelected}
+                onOpen={openFilm}
                 onShuffle={() =>
                   setPickSeed(
                     (s) =>
@@ -361,6 +464,33 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              <label className="find">
+                <svg className="find-icon" viewBox="0 0 16 16" aria-hidden="true">
+                  <circle cx="7" cy="7" r="4.5" />
+                  <path d="M10.5 10.5 14 14" />
+                </svg>
+                <input
+                  type="search"
+                  aria-label="Find a film in this list"
+                  placeholder="Find a film"
+                  value={find}
+                  onChange={(e) => setFind(e.target.value)}
+                  onKeyDown={(e) => e.key === "Escape" && setFind("")}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+                {find && (
+                  <button
+                    type="button"
+                    className="find-clear"
+                    aria-label="Clear"
+                    onClick={() => setFind("")}
+                  >
+                    ×
+                  </button>
+                )}
+              </label>
               <label className="sort">
                 <span className="eyebrow">Sort</span>
                 <select
@@ -407,12 +537,16 @@ export default function App() {
                   entry={details[f.slug]}
                   show={show}
                   hidden={hidden}
-                  onOpen={setSelected}
+                  onOpen={openFilm}
                 />
               ))}
             </div>
             {!pageFilms.length && !stillLoading && (
-              <p className="muted empty-state">No films match these filters.</p>
+              <p className="muted empty-state">
+                {findKey
+                  ? `Nothing matching “${find.trim()}” in these results.`
+                  : "No films match these filters."}
+              </p>
             )}
 
             {/* End of the results: say what's hidden and offer to show it. */}
@@ -473,6 +607,9 @@ export default function App() {
             entry={details[selected.slug]}
             region={region}
             onClose={closeModal}
+            onPrev={prevFilm ? () => openFilm(prevFilm) : null}
+            onNext={nextFilm ? () => openFilm(nextFilm) : null}
+            position={selectedIndex >= 0 ? { index: selectedIndex + 1, total: filtered.length } : null}
           />
         )}
       </main>

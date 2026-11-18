@@ -1,6 +1,6 @@
 import { HttpError } from './http.js';
 import type { TmdbRef } from './letterboxd.js';
-import { getDirectLinks } from './justwatch.js';
+import { getOffers, type Price } from './justwatch.js';
 import { searchLink } from './search-links.js';
 import { buildCatalog, canonicalFor, type Canonical } from './providers.js';
 
@@ -15,6 +15,8 @@ export interface Provider {
   linkKind: 'direct' | 'search' | null;
   /** Lower = more widely known (household names first, then TMDB's ranking for the country). Lists are sorted by it. */
   rank: number;
+  /** Cheapest rent or buy price on this service (any quality), from JustWatch; null if unknown or not rent/buy. */
+  price: Price | null;
 }
 
 export interface Availability {
@@ -142,9 +144,10 @@ export async function getDetails(ref: TmdbRef, region: string): Promise<FilmDeta
   const title: string = d.title || d.name;
 
   const anyProviders = r && ['free', 'ads', 'flatrate', 'rent', 'buy'].some((k) => r[k]?.length);
-  const [direct, catalog] = anyProviders
-    ? await Promise.all([getDirectLinks(ref, title, region), catalogFor(region)])
-    : [new Map<string, string>(), null];
+  const [offers, catalog] = anyProviders
+    ? await Promise.all([getOffers(ref, title, region), catalogFor(region)])
+    : [{ links: new Map<string, string>(), prices: new Map<string, Price>() }, null];
+  const direct = offers.links;
 
   // Each offer links to where it actually lives: a direct link for this category, else for the service in any
   // category, else that variant's search (an Amazon channel searches Amazon). Variants of one service are then
@@ -164,9 +167,16 @@ export async function getDetails(ref: TmdbRef, region: string): Promise<FilmDeta
         url: url ?? search,
         linkKind: url ? 'direct' : search ? 'search' : null,
         rank: c.rank,
+        price: offers.prices.get(`${cat}:${p.provider_id}`) ?? null,
       };
       const cur = merged.get(c.id);
-      if (!cur || rank(entry) > rank(cur)) merged.set(c.id, entry);
+      if (!cur || rank(entry) > rank(cur)) {
+        // keep the cheapest price seen across the service's variants
+        if (cur?.price && (!entry.price || cur.price.value < entry.price.value)) entry.price = cur.price;
+        merged.set(c.id, entry);
+      } else if (entry.price && (!cur.price || entry.price.value < cur.price.value)) {
+        cur.price = entry.price;
+      }
     }
     // Most widely known services first (Netflix, Prime Video…); niche ones last
     return [...merged.values()].sort((a, b) => a.rank - b.rank);

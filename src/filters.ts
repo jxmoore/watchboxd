@@ -40,9 +40,9 @@ export const isUnavailable = (entry: DetailEntry | undefined) =>
  * @param showUnavailable films available nowhere are hidden unless this is on; when on, they're added to any filter.
  */
 export function matches(show: Show, hidden: Set<number>, entry: DetailEntry | undefined, showUnavailable: boolean): boolean {
-  // Not loaded yet: keep a placeholder in the default view (it drops out if it turns out to be unavailable),
-  // but not while filtering, since we can't know whether it matches.
-  if (!entry) return show === 'all' && !hidden.size;
+  // Not loaded yet: keep a placeholder under "All" (it drops out if it turns out to be unavailable, or only on
+  // unchecked services), but not under the other filters, since we can't know whether it matches.
+  if (!entry) return show === 'all';
   if (!entry.ok) return showUnavailable; // couldn't look it up: counts as unavailable
   const d = entry.data;
 

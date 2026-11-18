@@ -10,9 +10,10 @@ interface Props {
   busy: boolean;
   onRegion: (r: string) => void;
   onSubmit: (mode: Mode, value: string) => void;
+  onRandom?: () => void; // "Random list": look up a popular Letterboxd list
 }
 
-export default function SearchForm({ initialMode, initialValue, region, busy, onRegion, onSubmit }: Props) {
+export default function SearchForm({ initialMode, initialValue, region, busy, onRegion, onSubmit, onRandom }: Props) {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [value, setValue] = useState(initialValue);
 
@@ -28,6 +29,7 @@ export default function SearchForm({ initialMode, initialValue, region, busy, on
 
   return (
     <form className="search" onSubmit={submit}>
+      <div className="search-modes">
       <div className="seg" role="tablist" aria-label="Look up by">
         <button type="button" role="tab" aria-selected={mode === 'user'} onClick={() => setMode('user')}>
           Watchlist
@@ -35,6 +37,16 @@ export default function SearchForm({ initialMode, initialValue, region, busy, on
         <button type="button" role="tab" aria-selected={mode === 'url'} onClick={() => setMode('url')}>
           List URL
         </button>
+      </div>
+      {/* Not a mode: loads one of Letterboxd's popular lists at random */}
+      {onRandom && (
+        <button type="button" className="random-list" onClick={onRandom} disabled={busy} title="Look up a popular Letterboxd list, picked at random">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M1.5 4.5h3c2.5 0 3.5 7 6 7h3.5M1.5 11.5h3c1.1 0 1.9-1.3 2.6-2.8M9 6.3c.6-1 1.3-1.8 2.5-1.8H15M13 2.5l2 2-2 2M13 9.5l2 2-2 2" />
+          </svg>
+          Random list
+        </button>
+      )}
       </div>
       <div className="search-row">
         <div className="field">

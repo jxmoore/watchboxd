@@ -47,7 +47,9 @@ export default function ServicePicker({ services, allIds, hidden, onChange }: Pr
     else next.add(id);
     onChange(next);
   };
-  const toggleAll = () => onChange(noneChecked ? new Set() : new Set(allIds));
+  // Only touches services in this list; remembered choices for services elsewhere are kept
+  const toggleAll = () =>
+    onChange(noneChecked ? new Set([...hidden].filter((id) => !allIds.includes(id))) : new Set([...hidden, ...allIds]));
 
   const label =
     checkedCount === services.length ? 'All services' : noneChecked ? 'No services' : `${checkedCount} of ${services.length} services`;

@@ -1,5 +1,5 @@
 // Pieces shared by the film card and the film modal.
-import type { MouseEvent } from 'react';
+import { Fragment, type MouseEvent } from 'react';
 import type { FilmDetails, ListFilm } from '../api';
 import { CAT_LABELS, catsFor, visibleRows, type Show } from '../filters';
 
@@ -18,23 +18,32 @@ export function AvailRows({ d, show, hidden }: { d: FilmDetails; show: Show; hid
         <div className="cat" key={c}>
           <span className={`tag ${c}`}>{CAT_LABELS[c]}</span>
           <span className="logos">
-            {providers.map((p) =>
-              p.url ? (
+            {providers.map((p) => {
+              const price = p.price ? ` · from ${p.price.text}` : '';
+              const logo = p.url ? (
                 <a
-                  key={p.id}
                   href={p.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={stop}
-                  title={p.linkKind === 'direct' ? `Watch on ${p.name}` : `Search ${p.name} for this film`}
+                  title={(p.linkKind === 'direct' ? `Watch on ${p.name}` : `Search ${p.name} for this film`) + price}
                   className="logo-link"
                 >
                   <img src={p.logo} alt={p.name} />
                 </a>
               ) : (
-                <img key={p.id} src={p.logo} alt={p.name} title={`${p.name} (no link; try Watch options)`} />
-              ),
-            )}
+                <img src={p.logo} alt={p.name} title={`${p.name} (no link; try Watch options)${price}`} />
+              );
+              // Rent/buy: the cheapest price on that service sits under its logo
+              return p.price ? (
+                <span key={p.id} className="priced">
+                  {logo}
+                  <small>{p.price.text}</small>
+                </span>
+              ) : (
+                <Fragment key={p.id}>{logo}</Fragment>
+              );
+            })}
           </span>
         </div>
       ))}

@@ -62,7 +62,7 @@ export default function Spotlight({ pick, canShuffle, onOpen, onShuffle }: Props
           )}
         </div>
       </div>
-      {d.posterLarge && <img className="spotlight-poster" src={d.posterLarge} alt="" />}
+      {d.posterLarge && <img key={d.posterLarge} className="spotlight-poster" src={d.posterLarge} alt="" />}
     </section>
   );
 }

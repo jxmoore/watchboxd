@@ -21,13 +21,18 @@ export function resolveListUrl(input: string): string {
 
   if (/^@?[A-Za-z0-9_]+$/.test(raw)) return `https://letterboxd.com/${raw.replace(/^@/, '')}/watchlist/`;
 
+  // Not a plain username, so it should be a link. Something without a dot or slash (like "some-name") is a mistyped
+  // username: Letterboxd usernames are only letters, numbers and underscores.
+  if (!/[./]/.test(raw)) {
+    throw new HttpError(400, 'That doesn’t look like a Letterboxd username. Usernames use only letters, numbers and underscores.');
+  }
   let u: URL;
   try {
     u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
   } catch {
-    throw new HttpError(400, 'That is not a username or a URL.');
+    throw new HttpError(400, 'That isn’t a Letterboxd username or list link.');
   }
-  if (!/(^|\.)letterboxd\.com$/i.test(u.hostname)) throw new HttpError(400, 'Only letterboxd.com URLs are supported.');
+  if (!/(^|\.)letterboxd\.com$/i.test(u.hostname)) throw new HttpError(400, 'That link isn’t from letterboxd.com. Paste a Letterboxd list link.');
   let p = u.pathname.replace(/\/page\/\d+\/?$/, '/');
   if (!p.endsWith('/')) p += '/';
   if (p.split('/').filter(Boolean).length < 2)
@@ -72,4 +77,33 @@ export async function getTmdbRefFromLetterboxd(slug: string): Promise<TmdbRef | 
   const id = html.match(/data-tmdb-id="(\d+)"/)?.[1];
   const type = html.match(/data-tmdb-type="(\w+)"/)?.[1] === 'tv' ? 'tv' : 'movie';
   return id ? { id, type } : null;
+}
+
+export interface PopularList {
+  url: string; // https://letterboxd.com/<user>/list/<slug>/
+  title: string;
+  owner: string; // Letterboxd username
+  count: number | null; // films in the list
+}
+
+/**
+ * Letterboxd's popular lists (all time). The "this week" page blocks automated requests; the all-time page doesn't.
+ * Read from its HTML, so it can break if Letterboxd changes the markup; callers should treat it as optional.
+ */
+export async function getPopularLists(): Promise<PopularList[]> {
+  const html = await getText('https://letterboxd.com/lists/popular/');
+  const out: PopularList[] = [];
+  for (const block of html.split('class="list-summary js-list-summary').slice(1)) {
+    const href = block.match(/href="(\/([a-z0-9_]+)\/list\/[a-z0-9_-]+\/)"/i);
+    const title = block.match(/<h2[^>]*>\s*<a[^>]*>([^<]+)/);
+    if (!href || !title) continue;
+    const count = block.match(/([\d,]+)\s*(?:&nbsp;|\s)films/);
+    out.push({
+      url: `https://letterboxd.com${href[1]}`,
+      title: decodeHtml(title[1].trim()),
+      owner: href[2],
+      count: count ? Number(count[1].replace(/,/g, '')) : null,
+    });
+  }
+  return out;
 }
